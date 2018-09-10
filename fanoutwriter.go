@@ -4,36 +4,58 @@
 package fanoutwriter
 
 import (
+	"errors"
 	"io"
 	"sync"
 )
 
-type client struct {
-	fw  *FanoutWriter
-	off int
-}
+var (
+	ErrFellBehind = errors.New("reader fell behind the writers buffer limit")
+)
 
 // FanoutWriter is a io.WriteCloser which can spawn multiple io.ReadClosers
 // that read at different speeds.
-type FanoutWriter struct {
+type FanoutWriter interface {
+	io.WriteCloser
+	Reader() io.ReadCloser // Returns a new reader which begins reading depending on the configuration
+}
+
+type client struct {
+	fw  *fwriter
+	off int
+}
+
+type fwriter struct {
 	sync.Mutex
-	update  *sync.Cond
 	buf     []byte
+	update  *sync.Cond
+	c       *FanoutWriterConfig
 	off     int
 	clients map[*client]struct{}
 	closed  bool
 }
 
-// NewFanoutWriter creates a new FanoutWriter with no initial data
-func NewFanoutWriter() *FanoutWriter {
-	return NewFanoutWriterWithBuffer(make([]byte, 0, 0))
+type FanoutWriterConfig struct {
+	Buf           []byte // Initial buffer of the writer.
+	Limit         int    // Limit for the size of which buffer may grow
+	ReadFromStart bool   // Whether or not to start a reader from the end or beginning of the buffer.
 }
 
-// NewFanoutWriterWithBuffer creates a new FanoutWriter with the supplied initial
-// buffer which may contain data
-func NewFanoutWriterWithBuffer(buf []byte) *FanoutWriter {
-	f := &FanoutWriter{
-		buf:     buf,
+// NewDefaultFanoutWriter creates a new FanoutWriter with no initial data and
+// with no buffer limit.
+func NewDefaultFanoutWriter() FanoutWriter {
+	return NewFanoutWriter(&FanoutWriterConfig{
+		Buf:           nil,
+		Limit:         0,
+		ReadFromStart: false,
+	})
+}
+
+// NewFanoutWriter creates a new FanoutWriter with the configuration passed.
+func NewFanoutWriter(c *FanoutWriterConfig) FanoutWriter {
+	f := &fwriter{
+		buf:     c.Buf,
+		c:       c,
 		off:     0,
 		clients: make(map[*client]struct{}),
 		closed:  false,
@@ -44,8 +66,9 @@ func NewFanoutWriterWithBuffer(buf []byte) *FanoutWriter {
 
 // Write implements the standard Write interface: it writes data to the
 // internal buffer, which will be read by all readers which were created before
-// the call. Write only returns an error when it was previously closed.
-func (f *FanoutWriter) Write(p []byte) (n int, err error) {
+// the call (unless ReadFromStart is true). Write only returns an error when it
+// was previously closed.
+func (f *fwriter) Write(p []byte) (n int, err error) {
 	blen := len(p)
 	if blen == 0 {
 		return 0, nil
@@ -65,7 +88,25 @@ func (f *FanoutWriter) Write(p []byte) (n int, err error) {
 		return blen, nil
 	}
 
-	f.buf = append(f.buf, p...)
+	if f.c.Limit != 0 {
+		if f.c.Limit > blen {
+			// figure out how many bytes are pushed off the end
+			invalidBytes := len(f.buf) - blen
+			// chop those bytes off
+			f.buf = append(f.buf[invalidBytes:], p...)
+			// move the offset pointer forward
+			f.off += invalidBytes
+		} else {
+			// we need to invalidate ALL of f.buf since we will be replacing
+			// all of it
+			f.off += len(f.buf)
+			f.buf = p[:f.c.Limit]
+		}
+	} else {
+		// since there is no limiting factor that doesn't panic, off will never
+		// update
+		f.buf = append(f.buf, p...)
+	}
 
 	// notify any waiting clients
 	f.update.Broadcast()
@@ -76,7 +117,7 @@ func (f *FanoutWriter) Write(p []byte) (n int, err error) {
 
 // Write closes the FanoutWriter, causing the remaining buffer to be read by
 // currently created Readers, then respond to future read requests with io.EOF.
-func (f *FanoutWriter) Close() error {
+func (f *fwriter) Close() error {
 	f.Lock()
 	f.closed = true
 
@@ -87,31 +128,41 @@ func (f *FanoutWriter) Close() error {
 }
 
 // must be called while f is locked
-func (f *FanoutWriter) updateOff() {
-	offJump := 0
-	for c, _ := range f.clients {
-		offDiff := c.off - f.off
+func (f *fwriter) updateOff() {
+	// so if we are ReadingFromStart, we let Limit during Write handle clipping
+	// old data off. Otherwise, we handle it here.
+	if !f.c.ReadFromStart {
+		offJump := 0
+		for c, _ := range f.clients {
+			offDiff := c.off - f.off
 
-		if offDiff > offJump {
-			offJump = offDiff
+			if offDiff > offJump {
+				offJump = offDiff
+			}
 		}
-	}
 
-	f.buf = f.buf[offJump:]
-	f.off += offJump
+		f.buf = f.buf[offJump:]
+		f.off += offJump
+	}
 }
 
 // Reader creates a new reader pointed at the end of the current buffer. Reader
 // will be able to read any data written to the FanoutWriter after the reader
 // is created until either the Reader or Writer is closed.
-func (f *FanoutWriter) Reader() (r io.ReadCloser) {
+func (f *fwriter) Reader() (r io.ReadCloser) {
 	f.Lock()
 	if f.closed {
 		panic("FanoutWriter: attempted to create a new Reader when closed.")
 	}
+
+	off := f.off
+	if !f.c.ReadFromStart {
+		off += len(f.buf)
+	}
+
 	r = &client{
 		fw:  f,
-		off: f.off + len(f.buf),
+		off: off,
 	}
 	f.Unlock()
 	return
@@ -125,6 +176,19 @@ func (c *client) Read(p []byte) (n int, err error) {
 	c.fw.Lock()
 	for {
 		localoff := c.off - c.fw.off
+
+		// first, lets detect whether we 'fell off the end' (due to a limit
+		// constraint). This is an error state, so we need to report it.
+		if localoff > len(c.fw.buf) || localoff < 0 {
+			// if our offset minus their offset is greater then len, then we
+			// could have NEVER gotten this offset UNLESS the writer offset has
+			// surpassed us.
+			// At this point, we consider this reader to be 'closed'.
+			delete(c.fw.clients, c)
+			c.fw.Unlock()
+			return 0, ErrFellBehind
+		}
+
 		lbuf := c.fw.buf[localoff:]
 		// regardless of whether or not we have any space to read, we need to
 		// check if the writer has any more data and has closed
