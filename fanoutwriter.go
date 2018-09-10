@@ -17,7 +17,7 @@ var (
 // that read at different speeds.
 type FanoutWriter interface {
 	io.WriteCloser
-	Reader() io.ReadCloser // Returns a new reader which begins reading depending on the configuration
+	NewReader() io.ReadCloser // Returns a new reader which begins reading depending on the configuration
 }
 
 type client struct {
@@ -149,7 +149,7 @@ func (f *fwriter) updateOff() {
 // Reader creates a new reader pointed at the end of the current buffer. Reader
 // will be able to read any data written to the FanoutWriter after the reader
 // is created until either the Reader or Writer is closed.
-func (f *fwriter) Reader() (r io.ReadCloser) {
+func (f *fwriter) NewReader() (r io.ReadCloser) {
 	f.Lock()
 	if f.closed {
 		panic("FanoutWriter: attempted to create a new Reader when closed.")
