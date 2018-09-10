@@ -9,7 +9,7 @@ who, for example, may be sitting over a variable speed network connection.
 ## Documentation
 
 Documentation for the FanoutWriter may be found on
-[godoc.org](https://godoc.org/github.com/ichbinjoe/fanoutwriter)
+[godoc.org](https://godoc.org/github.com/Ichbinjoe/fanoutwriter)
 
 ## License
 
