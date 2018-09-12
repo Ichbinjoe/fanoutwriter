@@ -10,7 +10,8 @@ import (
 )
 
 var (
-	ErrFellBehind = errors.New("reader fell behind the writers buffer limit")
+	ErrFellBehind                = errors.New("reader fell behind the writers buffer limit")
+	ErrWriteWouldCauseFallBehind = errors.New("writing larger than the fanout limit will result in all readers falling behind")
 )
 
 // FanoutWriter is a io.WriteCloser which can spawn multiple io.ReadClosers
@@ -108,10 +109,16 @@ func (f *fwriter) Write(p []byte) (n int, err error) {
 				f.buf = append(f.buf, p...)
 			}
 		} else {
-			// we need to invalidate ALL of f.buf since we will be replacing
-			// all of it
-			f.off += len(f.buf)
-			f.buf = p[len(p)-f.c.Limit:]
+			// TODO: Should this always return an error, or only when we have a
+			// client which would be invalidated by the write?
+			if len(f.clients) == 0 {
+				// if we have no current clients, then this really doesn't
+				// matter, as no clients will be invalidated
+				f.buf = p[len(p)-f.c.Limit:]
+			} else {
+				f.Unlock()
+				return 0, ErrWriteWouldCauseFallBehind
+			}
 		}
 	} else {
 		// since there is no limiting factor that doesn't panic, off will never
@@ -190,8 +197,8 @@ func (f *fwriter) NewReader() (r io.ReadCloser) {
 func (c *client) Read(p []byte) (n int, err error) {
 	c.fw.Lock()
 	for {
-		localoff := c.off - c.fw.off
 
+		localoff := c.off - c.fw.off
 		// first, lets detect whether we 'fell off the end' (due to a limit
 		// constraint). This is an error state, so we need to report it.
 		if localoff > len(c.fw.buf) || localoff < 0 {
