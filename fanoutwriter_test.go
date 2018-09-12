@@ -18,10 +18,19 @@ func validateRead(t *testing.T, r io.Reader, b []byte, l int) {
 	assert.Equal(t, l, n, "length read unexpected")
 }
 
+func vclose(t *testing.T, c io.Closer) {
+	e := c.Close()
+	assert.NoError(t, e, "Close should not return with an error")
+}
+
 func TestCreateReaderWriteThenRead(t *testing.T) {
 	fw := NewDefaultFanoutWriter()
 	r := fw.NewReader()
 	r2 := fw.NewReader()
+
+	defer vclose(t, fw)
+	defer vclose(t, r)
+	defer vclose(t, r2)
 
 	wb := []byte{1, 2, 3, 4, 5}
 
@@ -39,10 +48,13 @@ func TestCreateReaderWriteThenRead(t *testing.T) {
 
 func TestWriteCreateReaderWriteThenRead(t *testing.T) {
 	fw := NewDefaultFanoutWriter()
+	defer vclose(t, fw)
+
 	wb := []byte{1, 2, 3, 4, 5}
 	validateWrite(t, fw, wb)
 
 	r := fw.NewReader()
+	defer vclose(t, r)
 
 	validateWrite(t, fw, wb)
 	rb := make([]byte, 10, 10)
@@ -56,10 +68,13 @@ func TestWriteCreateReaderWriteThenReadWithReadFromStart(t *testing.T) {
 	fw := NewFanoutWriter(&FanoutWriterConfig{
 		ReadFromStart: true,
 	})
+	defer vclose(t, fw)
+
 	wb := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
 	validateWrite(t, fw, wb[:5])
 
 	r := fw.NewReader()
+	defer vclose(t, r)
 
 	validateWrite(t, fw, wb[5:])
 	rb := make([]byte, 10, 10)
@@ -74,6 +89,7 @@ func TestRFSLimitDoubleWriteOverCreateReaderRead(t *testing.T) {
 		Limit:         6,
 		ReadFromStart: true,
 	})
+	defer vclose(t, fw)
 
 	wb := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
 	validateWrite(t, fw, wb[:5])
@@ -82,6 +98,7 @@ func TestRFSLimitDoubleWriteOverCreateReaderRead(t *testing.T) {
 	rb := make([]byte, 10, 10)
 
 	r := fw.NewReader()
+	defer vclose(t, r)
 	validateRead(t, r, rb, 6)
 
 	// rb should contain the last 6 elements of wb
@@ -94,14 +111,60 @@ func TestRFSLimitWriteOverCreateReaderRead(t *testing.T) {
 		ReadFromStart: true,
 	})
 
+	defer vclose(t, fw)
+
 	wb := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
 	validateWrite(t, fw, wb)
 
 	rb := make([]byte, 10, 10)
 
 	r := fw.NewReader()
+	defer vclose(t, r)
+
 	validateRead(t, r, rb, 6)
 
 	// rb should contain the last 6 elements of wb
 	assert.ElementsMatch(t, wb[4:], rb[:6])
+}
+
+func TestInitialBuffer(t *testing.T) {
+	b := []byte{1, 2, 3, 4, 5}
+	fw := NewFanoutWriter(&FanoutWriterConfig{
+		Buf:           b,
+		ReadFromStart: true,
+	})
+
+	defer vclose(t, fw)
+
+	rb := make([]byte, 10, 10)
+
+	r := fw.NewReader()
+	defer vclose(t, r)
+
+	validateRead(t, r, rb, 5)
+
+	assert.ElementsMatch(t, b, rb[:5])
+}
+
+func TestInitialBufferCreateReaderWriteRead(t *testing.T) {
+	b := []byte{1, 2, 3, 4, 5}
+	fw := NewFanoutWriter(&FanoutWriterConfig{
+		Buf:           b[:3],
+		ReadFromStart: true,
+	})
+
+	defer vclose(t, fw)
+
+	r := fw.NewReader()
+	defer vclose(t, r)
+
+	// so like make sure we actually copy things in i guess
+	b[3] = 6
+	b[4] = 7
+	validateWrite(t, fw, b[3:])
+
+	rb := make([]byte, 10, 10)
+	validateRead(t, r, rb, 5)
+
+	assert.ElementsMatch(t, b, rb[:5])
 }

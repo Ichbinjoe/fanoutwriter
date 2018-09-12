@@ -53,13 +53,19 @@ func NewDefaultFanoutWriter() FanoutWriter {
 
 // NewFanoutWriter creates a new FanoutWriter with the configuration passed.
 func NewFanoutWriter(c *FanoutWriterConfig) FanoutWriter {
+	off := 0
+	if !c.ReadFromStart {
+		off = len(c.Buf)
+	}
+
 	f := &fwriter{
 		buf:     c.Buf,
 		c:       c,
-		off:     0,
+		off:     off,
 		clients: make(map[*client]struct{}),
 		closed:  false,
 	}
+
 	f.update = sync.NewCond(f)
 	return f
 }
