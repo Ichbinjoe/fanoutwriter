@@ -68,3 +68,40 @@ func TestWriteCreateReaderWriteThenReadWithReadFromStart(t *testing.T) {
 
 	assert.ElementsMatch(t, wb, rb)
 }
+
+func TestRFSLimitDoubleWriteOverCreateReaderRead(t *testing.T) {
+	fw := NewFanoutWriter(&FanoutWriterConfig{
+		Limit:         6,
+		ReadFromStart: true,
+	})
+
+	wb := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
+	validateWrite(t, fw, wb[:5])
+
+	validateWrite(t, fw, wb[5:])
+	rb := make([]byte, 10, 10)
+
+	r := fw.NewReader()
+	validateRead(t, r, rb, 6)
+
+	// rb should contain the last 6 elements of wb
+	assert.ElementsMatch(t, wb[4:], rb[:6])
+}
+
+func TestRFSLimitWriteOverCreateReaderRead(t *testing.T) {
+	fw := NewFanoutWriter(&FanoutWriterConfig{
+		Limit:         6,
+		ReadFromStart: true,
+	})
+
+	wb := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
+	validateWrite(t, fw, wb)
+
+	rb := make([]byte, 10, 10)
+
+	r := fw.NewReader()
+	validateRead(t, r, rb, 6)
+
+	// rb should contain the last 6 elements of wb
+	assert.ElementsMatch(t, wb[4:], rb[:6])
+}

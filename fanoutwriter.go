@@ -91,16 +91,21 @@ func (f *fwriter) Write(p []byte) (n int, err error) {
 	if f.c.Limit != 0 {
 		if f.c.Limit > blen {
 			// figure out how many bytes are pushed off the end
-			invalidBytes := len(f.buf) - blen
-			// chop those bytes off
-			f.buf = append(f.buf[invalidBytes:], p...)
-			// move the offset pointer forward
-			f.off += invalidBytes
+			invalidBytes := len(f.buf) + blen - f.c.Limit
+			if invalidBytes > 0 {
+				// chop those bytes off
+				f.buf = append(f.buf[invalidBytes:], p...)
+				// move the offset pointer forward
+				f.off += invalidBytes
+			} else {
+				// we can fit all of blen into the buffer
+				f.buf = append(f.buf, p...)
+			}
 		} else {
 			// we need to invalidate ALL of f.buf since we will be replacing
 			// all of it
 			f.off += len(f.buf)
-			f.buf = p[:f.c.Limit]
+			f.buf = p[len(p)-f.c.Limit:]
 		}
 	} else {
 		// since there is no limiting factor that doesn't panic, off will never
