@@ -132,11 +132,11 @@ func (f *fwriter) updateOff() {
 	// so if we are ReadingFromStart, we let Limit during Write handle clipping
 	// old data off. Otherwise, we handle it here.
 	if !f.c.ReadFromStart {
-		offJump := 0
+		offJump := len(f.buf)
 		for c, _ := range f.clients {
 			offDiff := c.off - f.off
 
-			if offDiff > offJump {
+			if offDiff < offJump {
 				offJump = offDiff
 			}
 		}

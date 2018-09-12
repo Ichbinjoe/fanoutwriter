@@ -15,12 +15,13 @@ func validateWrite(t *testing.T, f io.Writer, b []byte) {
 func validateRead(t *testing.T, r io.Reader, b []byte, l int) {
 	n, err := r.Read(b)
 	assert.NoError(t, err, "Read should not return with an error")
-	assert.Equal(t, n, l, "length read unexpected")
+	assert.Equal(t, l, n, "length read unexpected")
 }
 
 func TestCreateReaderWriteThenRead(t *testing.T) {
 	fw := NewDefaultFanoutWriter()
 	r := fw.NewReader()
+	r2 := fw.NewReader()
 
 	wb := []byte{1, 2, 3, 4, 5}
 
@@ -30,6 +31,9 @@ func TestCreateReaderWriteThenRead(t *testing.T) {
 
 	validateRead(t, r, rb, 5)
 
+	assert.ElementsMatch(t, wb, rb)
+
+	validateRead(t, r2, rb, 5)
 	assert.ElementsMatch(t, wb, rb)
 }
 
