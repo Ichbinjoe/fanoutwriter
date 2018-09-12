@@ -81,7 +81,7 @@ func (f *fwriter) Write(p []byte) (n int, err error) {
 		return 0, io.ErrClosedPipe
 	}
 
-	if len(f.clients) == 0 {
+	if !f.c.ReadFromStart && len(f.clients) == 0 {
 		// since new clients are created at the head of the buffer,
 		// when there are no clients we throw away the data
 		f.Unlock()
@@ -160,10 +160,14 @@ func (f *fwriter) NewReader() (r io.ReadCloser) {
 		off += len(f.buf)
 	}
 
-	r = &client{
+	c := &client{
 		fw:  f,
 		off: off,
 	}
+	r = c
+
+	f.clients[c] = struct{}{}
+
 	f.Unlock()
 	return
 }
