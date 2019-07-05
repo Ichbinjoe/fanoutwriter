@@ -1,7 +1,5 @@
 # FanoutWriter
 
- [![gocover.run](https://gocover.run/github.com/Ichbinjoe/fanoutwriter.svg?style=flat&tag=1.10)](https://gocover.run?tag=1.10&repo=github.com%2FIchbinjoe%2Ffanoutwriter) 
-
 FanoutWriter is a Golang package that implements `io.WriteCloser` and allows for
 multiple `io.ReadCloser`s to be created which may read the data which is written
 to the FanoutWriter at a speed independent of other `io.ReadCloser`s.  This is
